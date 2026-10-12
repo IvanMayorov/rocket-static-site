@@ -59,6 +59,18 @@ def clean_route(value: str, base: str) -> str | None:
     return "/" if path == "/" else path.rstrip("/") + "/"
 
 
+def source_canonical_route(relative_path: Path, canonical: str | None, base: str) -> str | None:
+    """Apply the current Webflow collection and listing routes to export files."""
+    parts = relative_path.parts
+    if len(parts) == 3 and parts[0] == "cases-inner-page" and parts[-1].lower() in {"index.html", "index.htm"}:
+        return "/cases/" + parts[1].strip("/") + "/"
+    if relative_path.as_posix() == "blog.html":
+        return "/blog/"
+    if relative_path.as_posix() == "novosti/index.html":
+        return "/novosti/"
+    return clean_route(canonical, base) if canonical else None
+
+
 def get_canonical(content: str) -> str | None:
     for match in LINK_TAG.finditer(content):
         tag = match.group(0)
@@ -243,19 +255,20 @@ def main() -> None:
     for relative_path in html_files:
         original = (source / relative_path).read_text(encoding="utf-8")
         raw_canonical = get_canonical(original)
-        candidate_route = clean_route(raw_canonical, base) if raw_canonical else None
+        candidate_route = source_canonical_route(relative_path, raw_canonical, base)
         derived_route = clean_route("/" + relative_path.with_suffix("").as_posix(), base)
         pages[relative_path] = {
             "context": page_url(relative_path),
             "canonical": raw_canonical,
             "candidate": candidate_route,
             "derived": derived_route,
+            "route_overridden": candidate_route != (clean_route(raw_canonical, base) if raw_canonical else None),
         }
 
     # Routes that can be generated safely, before handling canonical links that target them.
     available_routes = set(existing_routes)
     for relative_path, page in pages.items():
-        if relative_path.name.lower() in {"index.html", "index.htm", "404.html", "401.html"}:
+        if relative_path.name.lower() in {"404.html", "401.html"}:
             continue
         for route in (page["candidate"], page["derived"]):
             if route and route_can_be_created(target, route):
@@ -283,6 +296,7 @@ def main() -> None:
             canonical_routes[relative_path] = canonical_route
             path_map[source_url] = canonical_route
             path_map["/" + relative_path.as_posix()] = canonical_route
+            path_map[source_url.rstrip("/")] = canonical_route
             continue
 
         candidate = page["candidate"]
@@ -322,11 +336,11 @@ def main() -> None:
         path = target / output_path
         content = path.read_text(encoding="utf-8")
         raw_canonical = pages[source_relative_path]["canonical"]
-        candidate = clean_route(raw_canonical, base) if raw_canonical else None
+        candidate = pages[source_relative_path]["candidate"]
         canonical_route = candidate if candidate in routes else canonical_routes.get(source_relative_path)
         if not canonical_route:
             canonical_route = page_url(source_relative_path)
-        if raw_canonical and urlsplit(raw_canonical).scheme:
+        if raw_canonical and urlsplit(raw_canonical).scheme and not pages[source_relative_path]["route_overridden"]:
             canonical_url = raw_canonical
         else:
             canonical_url = site_url + canonical_route
@@ -346,17 +360,18 @@ def main() -> None:
         content = rewrite_css(content, "/" + relative_path, base)
         path.write_text(content, encoding="utf-8")
 
-    sitemap_urls = {
-        site_url + canonical_route
-        for relative_path, canonical_route in canonical_routes.items()
-        if relative_path.name.lower() not in {"404.html", "401.html"}
-        and canonical_route in routes
-        and not re.search(
-            r'<meta\b(?=[^>]*\bname=["\']robots["\'])(?=[^>]*\bcontent=["\'][^"\']*noindex)',
-            (source / relative_path).read_text(encoding="utf-8"),
-            re.IGNORECASE | re.DOTALL,
-        )
+    route_manifest = source / "scripts" / "webflow-routes.txt"
+    if not route_manifest.is_file():
+        raise SystemExit("Missing scripts/webflow-routes.txt with the published Webflow route list")
+    sitemap_routes = {
+        "/" if line.strip() in {"", "/"} else "/" + line.strip().strip("/") + "/"
+        for line in route_manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip()
     }
+    missing_routes = sorted(sitemap_routes - routes)
+    if missing_routes:
+        raise SystemExit("Webflow routes have no generated page: " + ", ".join(missing_routes[:20]))
+    sitemap_urls = {site_url + route for route in sitemap_routes}
     sitemap = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
