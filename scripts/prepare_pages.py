@@ -66,7 +66,7 @@ def source_canonical_route(relative_path: Path, canonical: str | None, base: str
         return "/cases/" + parts[1].strip("/") + "/"
     if relative_path.as_posix() == "blog.html":
         return "/blog/"
-    if relative_path.as_posix() == "novosti/index.html":
+    if relative_path.as_posix() in {"novosti.html", "novosti/index.html"}:
         return "/novosti/"
     return clean_route(canonical, base) if canonical else None
 
