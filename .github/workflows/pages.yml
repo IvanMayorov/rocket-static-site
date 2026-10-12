@@ -30,7 +30,8 @@ jobs:
       - name: Prepare static files
         env:
           REPOSITORY_NAME: ${{ github.event.repository.name }}
-        run: python3 scripts/prepare_pages.py --base "/${REPOSITORY_NAME}" --output _site
+          PAGES_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+        run: python3 scripts/prepare_pages.py --base "/${REPOSITORY_NAME}" --site-url "${PAGES_SITE_URL}" --output _site
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
